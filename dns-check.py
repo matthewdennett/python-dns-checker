@@ -182,4 +182,3 @@ elif args.c is True:
 elif args.v is not True and args.c is not True:
     do_verificatio()
     do_creation()
-
