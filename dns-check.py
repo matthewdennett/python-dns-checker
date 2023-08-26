@@ -1,8 +1,9 @@
-import argparse         # For the processing and handling of commandline arguments
+import argparse         # For the processing and handling of command line arguments
 import string           # For string types used in the random generator
 import random           # For generating random numbers
 import sys              # For access to the CMD arguments
 import dns.resolver     # For doing the DNS resolution
+import ipaddress        # Validation of the resolver IP Address
 
 class FontColors:
     HEADER = '\033[95m'
@@ -36,7 +37,7 @@ def check_spf(domain):
     """
     result = {'result': FAIL, 'data': []}
     try:
-        answers = dns.resolver.resolve(domain, 'TXT')
+        answers = dns_resolver.resolve(domain, 'TXT')
         for rdata in answers:
             if 'v=spf1' in str(rdata).lower() and result['result'] == PASS:
                 result['data'].append(str(rdata))
@@ -64,7 +65,7 @@ def check_dkim(domain, r):
     """
     result = {'result': FAIL, 'data': []}
     try:
-        answers = dns.resolver.resolve(r + '._domainkey.' + domain, 'TXT')
+        answers = dns_resolver.resolve(r + '._domainkey.' + domain, 'TXT')
         for rdata in answers:
             if 'v=dkim1;' in str(rdata).lower():
                 return {'result': PASS, 'data': str(rdata)}
@@ -84,9 +85,8 @@ def check_dmarc(domain):
     result = {'result': 'Fail', 'data': []}
     while len(domain_parts) > 1:
         try:
-            answers = dns.resolver.resolve('_dmarc.' + '.'.join(domain_parts), 'TXT')
+            answers = dns_resolver.resolve('_dmarc.' + '.'.join(domain_parts), 'TXT',)
             for rdata in answers:
-                # print(rdata)
                 if 'v=dmarc1;' in str(rdata).lower():
                     result['result'] = 'PASS'
                     result['data'].append(('.'.join(domain_parts), str(rdata)))
@@ -134,51 +134,68 @@ def create_dmarc(domain):
     print()
 
 
-def do_verificatio():
-    print_title('#')
-    print_title('VERIFICATION')
-    print_banner('TEST: SPECIFIC SPF RECORD')
-    print_result(check_spf(args.domain))
-    print_banner('TEST: SUB DOMAIN/WILDCARD SPF RECORD')
-    print_result(check_spf_sub_domain(args.domain, rand))
-    print_banner('TEST: WILDCARD DKIM RECORD')
-    print_result(check_dkim(args.domain, rand))
-    print_banner('TEST: DMARC RECORD')
-    print_result(check_dmarc(args.domain))
+def do_verification(domain):
+    try:
+        print_title('#')
+        print_title('VERIFICATION')
+        print_banner('TEST: SPECIFIC SPF RECORD')
+        print_result(check_spf(domain))
+        print_banner('TEST: SUB DOMAIN/WILDCARD SPF RECORD')
+        print_result(check_spf_sub_domain(domain, rand))
+        print_banner('TEST: WILDCARD DKIM RECORD')
+        print_result(check_dkim(domain, rand))
+        print_banner('TEST: DMARC RECORD')
+        print_result(check_dmarc(domain))
+    except dns.resolver.LifetimeTimeout as e:
+        print('Error: Connection time received!')
+        print(e)
 
 
-def do_creation():
+def do_creation(domain):
     print_title('# # # #')
     print_title('RECORD CREATION')
     print_banner('SPF RECORDS')
-    create_spf(args.domain)
+    create_spf(domain)
     print_banner('DKIM RECORD')
-    create_dkim_wildcard(args.domain)
+    create_dkim_wildcard(domain)
     print_banner('DMARC RECORD')
-    create_dmarc(args.domain)
-
+    create_dmarc(domain)
 
 
 # Beginning of the main program
 # Start parsing the comanline args to setup the program
 
 parser = argparse.ArgumentParser(description='Test and create DNS records for a given domain.')
-parser.add_argument('domain', metavar='domain', help='The string representation of the domain')
-parser.add_argument('resolver', metavar='Resolver', nargs='?', help='The ip address of the DNS server to use')
-parser.add_argument('-v', '-verify', action='store_true', help='Domain to verify records exist for')
-parser.add_argument('-c', '-create', action='store_true', help='Domain to create records for')
-args = parser.parse_args(sys.argv[1:])  # Pass in the cmd line agrs without the first arg(name of file)
+parser.add_argument('domain', metavar='domain', help='The domain which to run verification or creation for')
+parser.add_argument('resolver', metavar='Resolver', nargs='?', help='IP address of preferred DNS server')
+parser.add_argument('-v', '--verify', default=False, action='store_true', help='Verify records exist for domain')
+parser.add_argument('-c', '--create', default=False, action='store_true', help='Create records for domain')
+args = vars(parser.parse_args(sys.argv[1:]))  # Pass in the cmd line agrs without the first arg(name of file)
 
 rand = ''.join([random.choice(string.ascii_letters) for n in range(6)])
 
-if args.resolver is not None:
-    print("TODO - validate the ip address and store")
-    print()
+dns_resolver = dns.resolver.Resolver()
+# Validate the IP of the DNS resolver that was passed in
+if args.get('resolver') is not None:
+    try:
+        resolver_ip = ipaddress.ip_address(args.get('resolver'))
+        dns_resolver = dns.resolver.make_resolver_at(str(resolver_ip))
+    except ValueError as e:
+        print(e)
+        exit()
 
-if args.v is True:
-    do_verificatio()
-elif args.c is True:
-    do_creation()
-elif args.v is not True and args.c is not True:
-    do_verificatio()
-    do_creation()
+
+# Normalise the arguments to their long form
+if args.get('v'):
+    args['verify'] = args.get('v')
+if args.get('c'):
+    args['create'] = args.get('c')
+
+
+if args.get('verify'):
+    do_verification( args.get('domain'))
+elif args.get('create'):
+    do_creation( args.get('domain'))
+elif not  args.get('verify') and not args.get('create'):
+    do_verification( args.get('domain'))
+    do_creation( args.get('domain'))
